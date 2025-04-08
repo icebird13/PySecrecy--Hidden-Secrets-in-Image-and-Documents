@@ -1,5 +1,6 @@
 from tkinter import *
 from tkinter import filedialog, messagebox
+from tkinter import ttk
 import os
 from PIL import Image, ImageTk
 from stegano import lsb  # For hiding/revealing messages in images
@@ -29,15 +30,9 @@ def decrypt_message(iv, ct, key):
     pt = unpad(cipher.decrypt(ct), AES.block_size)
     return pt.decode()
 
-root = Tk()
-root.title("PySecracy - Hidden Secrets in Images and Documents")
-root.geometry("1200x800+150+100")  # Increased window size for better layout
-root.resizable(False, False)
-root.configure(bg="#f5f5f5")
-
 # --- Utility Functions ---
 def showimage():
-    """Loads an image file."""
+    """For loading an image file."""
     global current_filename
     current_filename = filedialog.askopenfilename(
         initialdir=os.getcwd(),
@@ -50,26 +45,24 @@ def showimage():
         try:
             img = Image.open(current_filename)
             
-            # Get the dimensions of the display box
             max_width = 400
             max_height = 400
             
-            # Resize the image while maintaining the aspect ratio using LANCZOS resampling
+            # Resizing image while maintaining the aspect ratio using LANCZOS resampling
             img.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
-
-            # Convert the image to Tkinter-compatible format
+            
             img = ImageTk.PhotoImage(img)
 
-            # Display the image
+            # Displaying image
             lb1.configure(image=img)
-            lb1.image = img  # Keep reference to avoid garbage collection
+            lb1.image = img 
 
             file_label.config(text=f"Current File: {os.path.basename(current_filename)}")
         except Exception as e:
             print(f"Error loading image: {e}")
 
 def loaddocument():
-    """Loads a text document."""
+    """For loading a text document."""
     global current_filename
     current_filename = filedialog.askopenfilename(
         initialdir=os.getcwd(),
@@ -88,114 +81,181 @@ def loaddocument():
         except Exception as e:
             print(f"Error loading document: {e}")
 
-# Function to hide message and track encryption time and message size
 def Hide():
-    """Hides the message in an image or document and tracks the message size and encryption time."""
+    """For hiding the message in an image or document and then tracking the message size and time to encrypt."""
     global current_filename
     if not current_filename:
         print("No file selected!")
         return
-    
-    message = text1.get(1.0, END).strip()  # Get message from text box
-    if not message:
-        print("No message to hide!")
-        return
 
-    # AES encryption for the message
-    key = hashlib.sha256("mysecretpassword".encode()).digest()  # Example key derived from password
-    iv, encrypted_message = encrypt_message(message, key)
-
-    # Formatting the message as 'iv' and 'encrypted_message'
-    formatted_message = f"{iv}\n{encrypted_message}"
-
-    # Track message size
-    message_size = len(message)
-
-    # Recording start time for encryption
+    key = hashlib.sha256("mysecretpassword".encode()).digest()   #key -> mysecretpassword (can be changed)
     start_time = time.time()
 
     if current_filename.lower().endswith('.txt'):
-        # Hide the encrypted message in an alternate data stream for documents
-        try:
-            hidden_stream_name = f"{current_filename}:hiddenMessage"
-            with open(hidden_stream_name, 'w', encoding='utf-8') as file:
-                file.write(formatted_message)  # Write the formatted message (iv + encrypted message)
-            print(f"Encrypted message hidden in alternate data stream of {os.path.basename(current_filename)}")
-        except Exception as e:
-            print(f"Error hiding message in ADS: {e}")
-    
+        if full_encrypt_var.get():  # choose for Full file encryption
+            try:
+                with open(current_filename, 'r', encoding='utf-8') as file:
+                    content = file.read()
+                iv, encrypted_message = encrypt_message(content, key)
+                with open(current_filename, 'w', encoding='utf-8') as file:
+                    file.write(f"{iv}\n{encrypted_message}")
+                print(f"Full document encrypted: {os.path.basename(current_filename)}")
+                message_label.config(text=f"Encrypted Entire File")
+            except Exception as e:
+                print(f"Error encrypting document: {e}")
+        else:  # Embed encrypted message into ADS
+            message = text1.get(1.0, END).strip()
+            if not message:
+                print("No message to hide!")
+                return
+            iv, encrypted_message = encrypt_message(message, key)
+            formatted_message = f"{iv}\n{encrypted_message}"
+            message_size = len(message)
+            try:
+                hidden_stream_name = f"{current_filename}:hiddenMessage"
+                with open(hidden_stream_name, 'w', encoding='utf-8') as file:
+                    file.write(formatted_message)
+                print(f"Encrypted message hidden in ADS: {os.path.basename(current_filename)}")
+                message_label.config(text=f"Message Size: {message_size} characters")
+            except Exception as e:
+                print(f"Error hiding message in ADS: {e}")
+
     elif current_filename.lower().endswith(('.png', '.jpg')):
-        # Hide the encrypted message in the image using LSB steganography
+        message = text1.get(1.0, END).strip()
+        if not message:
+            print("No message to hide!")
+            return
+
+        iv, encrypted_message = encrypt_message(message, key)
+        formatted_message = f"{iv}\n{encrypted_message}"
+        message_size = len(message)
+
         try:
-            secret_image = lsb.hide(current_filename, formatted_message)  # Hide the encrypted message
-            secret_image.save(f"hidden_{os.path.basename(current_filename)}")  # Save the new image with hidden message
-            print(f"Encrypted message hidden in image: {os.path.basename(current_filename)}")
+            # Hide the message using LSB
+            secret_image = lsb.hide(current_filename, formatted_message)
+
+            if full_encrypt_var.get():  # 1. choose for full image encryption with the lsb message
+                temp_output_path = "temp_stego_image.png"
+                secret_image.save(temp_output_path)
+
+                with open(temp_output_path, 'rb') as f:
+                    image_data = f.read()
+
+                iv_img = os.urandom(16)
+                cipher = AES.new(key, AES.MODE_CBC, iv_img)
+                pad_len = 16 - (len(image_data) % 16)
+                image_data += bytes([pad_len]) * pad_len
+                encrypted_data = iv_img + cipher.encrypt(image_data)
+
+                os.makedirs("Encrypted Images", exist_ok=True)
+                encrypted_output_path = os.path.join("Encrypted Images", f"encrypted_{os.path.basename(current_filename)}")
+                with open(encrypted_output_path, 'wb') as f:
+                    f.write(encrypted_data)
+
+                os.remove(temp_output_path)
+
+                print(f"Encrypted image saved to: {encrypted_output_path}")
+                message_label.config(text=f"Message Size: {message_size} characters")
+
+            else:  # 2. Save LSB-only stego image
+                os.makedirs("Stego Images", exist_ok=True)
+                base_filename = os.path.splitext(os.path.basename(current_filename))[0]
+                stego_output_path = os.path.join("Stego Images", f"stego_{base_filename}.png")
+                secret_image.save(stego_output_path, format="PNG")
+
+                print(f"Message hidden in image (not encrypted): {stego_output_path}")
+                message_label.config(text=f"Message Size: {message_size} characters")
+
         except Exception as e:
             print(f"Error hiding message in image: {e}")
 
-    # Record end time for encryption
     end_time = time.time()
-    encryption_time = end_time - start_time  # Time taken for encryption
-
-    # Update the GUI to show message size and encryption time
-    message_label.config(text=f"Message Size: {message_size} characters")
-    time_label.config(text=f"Encryption Time: {encryption_time:.4f} seconds")
+    time_label.config(text=f"Encryption Time: {end_time - start_time:.4f} seconds")
 
 
 def Show():
-    """Reveals the hidden message from an image or document and tracks decryption time."""
+    """Revealing the hidden message from an image or document and tracks decryption time."""
     global current_filename
     if not current_filename:
         print("No file selected!")
         return
     
-    # start time for decryption
     start_time = time.time()
-
-    key = hashlib.sha256("mysecret".encode()).digest()  # Example key derived from password
+    key = hashlib.sha256("mysecretpassword".encode()).digest()  #key should be same as the one in the hide() function
 
     if current_filename.lower().endswith('.txt'):
         try:
-            hidden_stream_name = f"{current_filename}:hiddenMessage"
-            
-            # alternate stream
-            if os.path.exists(hidden_stream_name):
-                with open(hidden_stream_name, 'r', encoding='utf-8') as file:
-                    secret_message = file.read()
-                    print(f"Secret message read: {secret_message}")  # Debug print
+            with open(current_filename, 'r', encoding='utf-8') as file:
+                content = file.read()
 
-                message_parts = secret_message.splitlines()
-                if len(message_parts) == 2:  
-                    iv, encrypted_message = message_parts
-                    # Decrypt the message
-                    decrypted_message = decrypt_message(iv, encrypted_message, key)
-                    print(f"Extracted and decrypted hidden message: {decrypted_message}")
-                    text1.delete(1.0, END)
-                    text1.insert(END, decrypted_message)
-                else:
-                    print("Hidden message format is incorrect.")
+            message_parts = content.splitlines()
+            if full_encrypt_var.get() and len(message_parts) == 2:
+                iv, encrypted_message = message_parts
+                decrypted_message = decrypt_message(iv, encrypted_message, key)
+                text1.delete(1.0, END)
+                text1.insert(END, decrypted_message)
+                print(f"Full file decrypted: {os.path.basename(current_filename)}")
             else:
-                print("No hidden message found in the alternate data stream.")
+                hidden_stream_name = f"{current_filename}:hiddenMessage"
+                if os.path.exists(hidden_stream_name):
+                    with open(hidden_stream_name, 'r', encoding='utf-8') as file:
+                        secret_message = file.read()
+                    parts = secret_message.splitlines()
+                    if len(parts) == 2:
+                        iv, encrypted_message = parts
+                        decrypted_message = decrypt_message(iv, encrypted_message, key)
+                        text1.delete(1.0, END)
+                        text1.insert(END, decrypted_message)
+                        print(f"Message revealed from ADS")
+                    else:
+                        print("Hidden message format incorrect.")
+                else:
+                    print("No hidden message found in ADS.")
         except Exception as e:
-            print(f"Error revealing message from ADS: {e}")
-    
+            print(f"Error revealing message from document: {e}")
+
     elif current_filename.lower().endswith(('.png', '.jpg')):
-        # Reveal the hidden encrypted message from the image using LSB steganography
         try:
-            secret_image = Image.open(current_filename)
-            secret_message = lsb.reveal(secret_image)  # Reveal the encrypted message
+            image_path = current_filename
 
-            # Print the secret message for debugging
-            print(f"Secret message revealed from image: {secret_message}")
+            # Handle full encrypted image if enabled
+            if full_encrypt_var.get():
+                with open(current_filename, 'rb') as f:
+                    encrypted_data = f.read()
 
-            # Check if the message is not empty
+                iv_img = encrypted_data[:16]
+                cipher = AES.new(key, AES.MODE_CBC, iv_img)
+                decrypted_data = cipher.decrypt(encrypted_data[16:])
+
+                # Removing padding
+                pad_len = decrypted_data[-1]
+                decrypted_data = decrypted_data[:-pad_len]
+
+                # Save temporarily to a file
+                temp_image_path = "temp_decrypted_image.png"
+                with open(temp_image_path, 'wb') as f:
+                    f.write(decrypted_data)
+
+                # Save the decrypted image to "Decrypted Images" folder
+                os.makedirs("Decrypted Images", exist_ok=True)
+                decrypted_image_path = os.path.join("Decrypted Images", f"decrypted_{os.path.basename(current_filename)}")
+                with open(decrypted_image_path, 'wb') as f:
+                    f.write(decrypted_data)
+                
+                print(f"Decrypted image saved to: {decrypted_image_path}")
+                image_path = temp_image_path
+
+            secret_message = lsb.reveal(image_path)
+
+            if full_encrypt_var.get() and os.path.exists(temp_image_path):
+                os.remove(temp_image_path)
+
+            print(f"Secret message revealed from image: {secret_message}") # Revealed hidden encrypted message using LSB
+
             if secret_message:
-                # Ensure the message is in the correct format (iv + encrypted message)
                 message_parts = secret_message.splitlines()
-                if len(message_parts) == 2:  # iv and encrypted message
+                if len(message_parts) == 2:
                     iv, encrypted_message = message_parts
-
-                    # Decrypt the message
                     decrypted_message = decrypt_message(iv, encrypted_message, key)
                     print(f"Extracted and decrypted hidden message from image: {decrypted_message}")
                     text1.delete(1.0, END)
@@ -207,83 +267,159 @@ def Show():
         except Exception as e:
             print(f"Error revealing message from image: {e}")
 
-    # Record end time for decryption
     end_time = time.time()
-    decryption_time = end_time - start_time  # Time taken for decryption
-
-    # Update the GUI to show decryption time
-    decryption_time_label.config(text=f"Decryption Time: {decryption_time:.4f} seconds")
-
-
-    # Record end time for decryption
-    end_time = time.time()
-    decryption_time = end_time - start_time  # Time taken for decryption
-
-    # Update the GUI to show decryption time
-    decryption_time_label.config(text=f"Decryption Time: {decryption_time:.4f} seconds")
-
-
-
-def save():
-    """Saves the modified images or documents."""
-    global current_filename
-    if not current_filename:
-        print("No modified files to save!")
-        return
+    decryption_time_label.config(text=f"Decryption Time: {end_time - start_time:.4f} seconds")
     
-    if current_filename.lower().endswith('.txt'):
-        try:
-            with open(current_filename, 'w', encoding='utf-8') as file:
-                file.write(text1.get(1.0, END))
-            print(f"Document saved as: {os.path.basename(current_filename)}")
-        except Exception as e:
-            print(f"Error saving document: {e}")
-    
-    elif current_filename.lower().endswith(('.png', '.jpg')):
-        try:
-            secret_image = Image.open(current_filename)
-            secret_image.save(f"modified_{os.path.basename(current_filename)}")
-            print(f"Image saved as: modified_{os.path.basename(current_filename)}")
-        except Exception as e:
-            print(f"Error saving image: {e}")
+#COMPARE IMAGES
+import cv2
+import numpy as np
+from tkinter import filedialog, Toplevel, Label, Button
+from skimage.metrics import structural_similarity as ssim
 
+def open_quality_check_window():
+    def load_original():
+        nonlocal original_img_path
+        original_img_path = filedialog.askopenfilename(title="Select Original Image")
+        if original_img_path:
+            original_label.config(text=f"Original Image Loaded")
 
-# --- GUI Widgets ---
-lb1 = Label(root, bg="white", width=50, height=20, relief="solid")
-lb1.grid(row=0, column=0, padx=20, pady=20)
+    def load_target():
+        nonlocal target_img_path
+        target_img_path = filedialog.askopenfilename(title="Select Stego or Decrypted Image")
+        if target_img_path:
+            target_label.config(text=f"Target Image Loaded")
 
-file_label = Label(root, text="Current File: None", bg="#f0f0f0", fg="#4A4A4A", font=("Arial", 12))
-file_label.grid(row=1, column=0, padx=10, pady=10)
+    def calculate_quality():
+        if not original_img_path or not target_img_path:
+            messagebox.showerror("Error", "Please load both images first.")
+            return
 
-text1 = Text(root, height=10, width=70, font=("Arial", 12))
-text1.grid(row=4, column=0, padx=20, pady=20)
+        img1 = cv2.imread(original_img_path)
+        img2 = cv2.imread(target_img_path)
 
-# Define the message size label
-message_label = Label(root, text="Message Size: 0 characters", bg="#f0f0f0", fg="#4A4A4A", font=("Arial", 12))
-message_label.grid(row=9, column=0, padx=10, pady=10)
+        if img1 is None or img2 is None:
+            messagebox.showerror("Error", "Failed to load images.")
+            return
 
-# Define the encryption time label
-time_label = Label(root, text="Encryption Time: 0.0000 seconds", bg="#f0f0f0", fg="#4A4A4A", font=("Arial", 12))
-time_label.grid(row=10, column=0, padx=10, pady=10)
+        img1 = cv2.resize(img1, (min(img1.shape[1], img2.shape[1]), min(img1.shape[0], img2.shape[0])))
+        img2 = cv2.resize(img2, (img1.shape[1], img1.shape[0]))
 
-# Buttons for hiding, revealing, saving, and loading files
-btn_hide = Button(root, text="Hide Message", command=Hide, width=20, height=2)
-btn_hide.grid(row=5, column=0, padx=10, pady=10)
+        gray1 = cv2.cvtColor(img1, cv2.COLOR_BGR2GRAY)
+        gray2 = cv2.cvtColor(img2, cv2.COLOR_BGR2GRAY)
 
-btn_show = Button(root, text="Show Message", command=Show, width=20, height=2)
-btn_show.grid(row=6, column=0, padx=10, pady=10)
+        psnr_val = cv2.PSNR(img1, img2)
+        ssim_val = ssim(gray1, gray2, channel_axis=None)
 
-btn_save = Button(root, text="Save File", command=save, width=20, height=2)
-btn_save.grid(row=7, column=0, padx=10, pady=10)
+        result_label.config(
+            text=f"📊 PSNR: {psnr_val:.2f} dB\n🔍 SSIM: {ssim_val:.4f}",
+            font=("Segoe UI", 12, "bold"),
+            bg="#e9ecef",
+            fg="#007acc"
+        )
 
-btn_load_img = Button(root, text="Load Image", command=showimage, width=20, height=2)
-btn_load_img.grid(row=0, column=1, padx=10, pady=10)
+    # new window created
+    win = Toplevel(root)
+    win.title("🔎 Image Quality Checker")
+    win.geometry("500x400")
+    win.configure(bg="#e9ecef")
 
-btn_load_doc = Button(root, text="Load Document", command=loaddocument, width=20, height=2)
-btn_load_doc.grid(row=1, column=1, padx=10, pady=10)
+    original_img_path = ""
+    target_img_path = ""
 
-# Decryption time label (updated after decryption)
-decryption_time_label = Label(root, text="Decryption Time: 0.0000 seconds", bg="#f0f0f0", fg="#4A4A4A", font=("Arial", 12))
-decryption_time_label.grid(row=8, column=0, padx=10, pady=10)
+    Label(win, text="Load Original and Stego/Decrypted Images", font=("Segoe UI", 13, "bold"), bg="#e9ecef").pack(pady=20)
+
+    original_label = Label(win, text="Original Image: Not Loaded", bg="#e9ecef", font=("Segoe UI", 10))
+    original_label.pack(pady=5)
+
+    Button(win, text="🖼️ Load Original Image", command=load_original, width=30).pack(pady=5)
+
+    target_label = Label(win, text="Target Image: Not Loaded", bg="#e9ecef", font=("Segoe UI", 10))
+    target_label.pack(pady=5)
+
+    Button(win, text="📷 Load Stego/Decrypted Image", command=load_target, width=30).pack(pady=5)
+
+    Button(win, text="📊 Calculate PSNR and SSIM", command=calculate_quality, width=30).pack(pady=20)
+
+    result_label = Label(win, text="", bg="#e9ecef")
+    result_label.pack(pady=10)
+
+#GUI
+root = Tk()
+root.title("🛡️ MediView - Storing Medical Images and Information securely")
+root.geometry("1200x800+150+100")
+root.resizable(False, False)
+root.configure(bg="#e9ecef")
+
+# Style configuration
+style = ttk.Style()
+style.theme_use("clam")
+style.configure("TButton",
+                font=("Segoe UI", 11),
+                padding=6,
+                relief="flat",
+                background="#007acc",
+                foreground="white")
+style.map("TButton",
+          background=[("active", "#005f99")],
+          foreground=[("active", "white")])
+
+# Frame for Image Preview
+preview_frame = Frame(root, bg="#ffffff", bd=2, relief="groove")
+preview_frame.grid(row=0, column=0, rowspan=6, padx=20, pady=20, sticky="n")
+
+lb1 = Label(preview_frame, bg="white", width=50, height=20)
+lb1.pack(padx=10, pady=10)
+
+file_label = Label(preview_frame, text="Current File: None",
+                   bg="white", fg="#333", font=("Segoe UI", 11))
+file_label.pack(pady=(10, 5))
+
+full_encrypt_var = BooleanVar()
+full_encrypt_checkbox = Checkbutton(preview_frame,
+                                    text="🔒 Enable Full File Encryption/Decryption",
+                                    variable=full_encrypt_var,
+                                    font=("Segoe UI", 10),
+                                    bg="white")
+full_encrypt_checkbox.pack(pady=(0, 10), anchor="w")
+
+# Frame for Actions and Message
+control_frame = Frame(root, bg="#e9ecef")
+control_frame.grid(row=0, column=1, sticky="n", padx=10, pady=20)
+
+text1_label = Label(control_frame, text="Enter Message Below:",
+                    bg="#e9ecef", font=("Segoe UI", 11, "bold"))
+text1_label.pack(anchor="w")
+
+text1 = Text(control_frame, height=10, width=60, font=("Segoe UI", 11))
+text1.pack(pady=10)
+
+message_label = Label(control_frame, text="📝 Message Size: 0 characters",
+                      bg="#e9ecef", fg="#333", font=("Segoe UI", 10))
+message_label.pack(anchor="w", pady=(0, 5))
+
+time_label = Label(control_frame, text="⏱️ Encryption Time: 0.0000 seconds",
+                   bg="#e9ecef", fg="#333", font=("Segoe UI", 10))
+time_label.pack(anchor="w", pady=(0, 5))
+
+decryption_time_label = Label(control_frame, text="🔓 Decryption Time: 0.0000 seconds",
+                              bg="#e9ecef", fg="#333", font=("Segoe UI", 10))
+decryption_time_label.pack(anchor="w", pady=(0, 10))
+
+# Buttons
+button_frame = Frame(control_frame, bg="#e9ecef")
+button_frame.pack(pady=20)
+
+def styled_btn(text, cmd):
+    return ttk.Button(button_frame, text=text, command=cmd, width=25)
+
+styled_btn("🖼️ Load Image", showimage).grid(row=0, column=0, padx=10, pady=5)
+styled_btn("📄 Load Document", loaddocument).grid(row=1, column=0, padx=10, pady=5)
+styled_btn("🔐 Hide Message", Hide).grid(row=2, column=0, padx=10, pady=5)
+styled_btn("🔍 Show Message", Show).grid(row=3, column=0, padx=10, pady=5)
+styled_btn("📊 Quality Checker Page", open_quality_check_window).grid(row=5, column=0, padx=10, pady=5)
+
+# Exit Button
+exit_btn = ttk.Button(control_frame, text="❌ Exit", command=root.quit)
+exit_btn.pack(pady=10)
 
 root.mainloop()
