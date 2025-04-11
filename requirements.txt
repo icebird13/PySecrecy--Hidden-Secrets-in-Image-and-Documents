@@ -1,5 +1,6 @@
-cryptography
+pycryptodome 
 Pillow
 opencv-python
 numpy
+stegano 
 scikit-image
